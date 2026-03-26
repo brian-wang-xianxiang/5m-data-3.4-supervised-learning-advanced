@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K-Fold Cross Validation Explainer</title>
+<style>
+  :root { --step-active: #534AB7; --step-done: #1D9E75; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #fff; color: #1a1a1a; }
+  .wrap { padding: 1.5rem 1rem 2rem; max-width: 820px; margin: 0 auto; }
+  .stepper { display: flex; align-items: center; gap: 0; margin-bottom: 2rem; overflow-x: auto; padding-bottom: 4px; }
+  .step-item { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; min-width: 90px; cursor: pointer; }
+  .step-circle { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 500; border: 2px solid; transition: all .25s; }
+  .step-label { font-size: 11px; text-align: center; color: #888; max-width: 80px; line-height: 1.3; }
+  .step-connector { flex: 1; height: 2px; margin-top: -20px; min-width: 12px; }
+  .panel { background: #fff; border: 0.5px solid #ddd; border-radius: 12px; padding: 1.25rem 1.5rem; }
+  .panel-title { font-size: 15px; font-weight: 500; color: #1a1a1a; margin-bottom: 4px; }
+  .panel-sub { font-size: 13px; color: #666; margin-bottom: 1.25rem; line-height: 1.6; }
+  .dataset-row { display: flex; gap: 3px; flex-wrap: wrap; margin-bottom: 1rem; }
+  .dot { width: 22px; height: 22px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500; }
+  .legend-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #666; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+  .fold-grid { display: flex; flex-direction: column; gap: 6px; margin: 1rem 0; }
+  .fold-row { display: flex; align-items: center; gap: 8px; }
+  .fold-label { font-size: 12px; min-width: 60px; }
+  .fold-cells { display: flex; gap: 2px; flex: 1; }
+  .fold-cell { flex: 1; height: 28px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 500; }
+  .metric-row { display: flex; gap: 10px; margin-top: 1rem; flex-wrap: wrap; }
+  .metric-card { background: #f5f5f5; border-radius: 8px; padding: .75rem 1rem; flex: 1; min-width: 110px; }
+  .metric-label { font-size: 12px; color: #666; margin-bottom: 4px; }
+  .metric-val { font-size: 20px; font-weight: 500; color: #1a1a1a; }
+  .hp-card { background: #f5f5f5; border-radius: 8px; padding: .75rem 1rem; border: 0.5px solid #ddd; }
+  .hp-card.selected { border: 2px solid #534AB7; background: #EEEDFE; }
+  .hp-card-label { font-size: 12px; color: #666; }
+  .hp-card-val { font-size: 15px; font-weight: 500; color: #1a1a1a; margin-top: 2px; }
+  .hp-card.selected .hp-card-label { color: #534AB7; }
+  .hp-card.selected .hp-card-val { color: #3C3489; }
+  .result-box { border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
+  .result-box.success { background: #E1F5EE; border: 0.5px solid #1D9E75; }
+  .result-box.info { background: #EEEDFE; border: 0.5px solid #534AB7; }
+  .result-box.amber { background: #FAEEDA; border: 0.5px solid #BA7517; }
+  .result-box p { font-size: 13px; line-height: 1.6; }
+  .result-box p.rb-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+  .result-box.success p { color: #085041; }
+  .result-box.info p { color: #3C3489; }
+  .result-box.amber p { color: #633806; }
+  .nav-row { display: flex; justify-content: space-between; margin-top: 1.5rem; gap: 10px; }
+  .btn { padding: 8px 20px; border-radius: 8px; border: 0.5px solid #ccc; background: transparent; cursor: pointer; font-size: 14px; color: #1a1a1a; transition: background .15s; }
+  .btn:hover { background: #f5f5f5; }
+  .btn.primary { background: #534AB7; color: #fff; border-color: #534AB7; }
+  .btn.primary:hover { background: #3C3489; border-color: #3C3489; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th { text-align: left; padding: 6px 10px; font-weight: 500; border-bottom: 0.5px solid #ddd; color: #666; font-size: 12px; }
+  td { padding: 6px 10px; border-bottom: 0.5px solid #ddd; color: #1a1a1a; }
+  tr:last-child td { border-bottom: none; }
+  tr.best-row td { background: #EEEDFE; color: #3C3489; }
+  .progress-bar { height: 8px; border-radius: 4px; background: #f0f0f0; margin: 4px 0; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stepper" id="stepper"></div>
+  <div class="panel" id="panel-content"></div>
+  <div class="nav-row">
+    <button class="btn" id="btn-prev" onclick="navigate(-1)">← Previous</button>
+    <button class="btn primary" id="btn-next" onclick="navigate(1)">Next →</button>
+  </div>
+</div>
+
+<script>
+let ls = 0;
+let sub = 0;
+const LOGICAL_STEPS = 6;
+const NUM_FOLDS = 5;
+
+const stepLabels = [
+  "Train / test split",
+  "5-fold setup",
+  "Hyperparameter tuning",
+  "Best params found",
+  "Evaluate on test set",
+  "Final model"
+];
+
+const foldAccs = [85.1, 87.4, 89.2, 88.3, 91.5];
+const cvAvg = (foldAccs.reduce((a,b)=>a+b,0)/foldAccs.length).toFixed(1);
+
+const hpOptions = [
+  { depth: 2, lr: 0.01, reg: 0.01, acc: parseFloat(cvAvg) },
+  { depth: 4, lr: 0.05, reg: 0.1,  acc: 81.4 },
+  { depth: 6, lr: 0.1,  reg: 0.1,  acc: 86.2 },
+  { depth: 6, lr: 0.1,  reg: 0.01, acc: 91.7 },
+  { depth: 8, lr: 0.2,  reg: 0.01, acc: 85.3 },
+  { depth: 8, lr: 0.5,  reg: 0.001,acc: 80.1 },
+];
+const bestIdx = 3;
+
+function buildStepper() {
+  const el = document.getElementById('stepper');
+  el.innerHTML = '';
+  stepLabels.forEach((label, i) => {
+    if (i > 0) {
+      const conn = document.createElement('div');
+      conn.className = 'step-connector';
+      conn.style.background = i < ls ? '#1D9E75' : '#ddd';
+      el.appendChild(conn);
+    }
+    const item = document.createElement('div');
+    item.className = 'step-item';
+    item.onclick = () => { ls = i; sub = 0; render(); };
+    const circle = document.createElement('div');
+    circle.className = 'step-circle';
+    let bg, color, borderColor;
+    if (i < ls) { bg = '#1D9E75'; color = '#fff'; borderColor = '#1D9E75'; }
+    else if (i === ls) { bg = '#534AB7'; color = '#fff'; borderColor = '#534AB7'; }
+    else { bg = 'transparent'; color = '#888'; borderColor = '#ccc'; }
+    circle.style.cssText = `background:${bg};color:${color};border-color:${borderColor}`;
+    circle.textContent = i < ls ? '✓' : (i + 1);
+    const lbl = document.createElement('div');
+    lbl.className = 'step-label';
+    lbl.textContent = label;
+    item.appendChild(circle); item.appendChild(lbl);
+    el.appendChild(item);
+  });
+}
+
+function makeDots(activeFold) {
+  const N = 100, trainN = 80, foldSize = 16;
+  let html = '<div class="dataset-row">';
+  for (let i = 0; i < N; i++) {
+    let bg, tc, label;
+    if (i >= trainN) { bg = '#F0997B'; tc = '#712B13'; label = 'T'; }
+    else if (activeFold !== null) {
+      const fStart = activeFold * foldSize, fEnd = fStart + foldSize;
+      if (i >= fStart && i < fEnd) { bg = '#FAC775'; tc = '#633806'; label = 'V'; }
+      else { bg = '#9FE1CB'; tc = '#085041'; label = 'Tr'; }
+    } else { bg = '#9FE1CB'; tc = '#085041'; label = 'Tr'; }
+    html += `<div class="dot" style="background:${bg};color:${tc}">${label}</div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderFoldGrid(activeFold) {
+  let html = '<div class="fold-grid">';
+  for (let f = 0; f < NUM_FOLDS; f++) {
+    const isActive = f === activeFold;
+    html += `<div class="fold-row">
+      <div class="fold-label" style="color:${isActive?'#534AB7':'#888'};font-weight:${isActive?'500':'400'}">Fold ${f+1}${isActive?' ✦':''}</div>
+      <div class="fold-cells">`;
+    for (let g = 0; g < NUM_FOLDS; g++) {
+      const isVal = g === f;
+      let cellBg = isVal ? '#FAC775' : '#9FE1CB';
+      let cellColor = isVal ? '#633806' : '#085041';
+      let cellText = isVal ? 'Validation' : 'Train';
+      html += `<div class="fold-cell" style="background:${cellBg};color:${cellColor};opacity:${isActive?1:0.4}">${cellText}</div>`;
+    }
+    html += `</div></div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+const stepContent = [
+  () => `
+    <div class="panel-title">Step 1 — hold out a 20% test set</div>
+    <div class="panel-sub">Before anything else, split the dataset once. The 20% test set is locked away and will not be used again until final evaluation. This prevents data leakage and gives an unbiased estimate of generalisation performance.</div>
+    ${makeDots(null)}
+    <div class="legend-row">
+      <div class="legend-item"><div class="legend-swatch" style="background:#9FE1CB"></div>Train (80 samples)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#F0997B"></div>Test — held out (20 samples)</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-card"><div class="metric-label">Total samples</div><div class="metric-val">100</div></div>
+      <div class="metric-card"><div class="metric-label">Training pool</div><div class="metric-val">80</div></div>
+      <div class="metric-card"><div class="metric-label">Test set</div><div class="metric-val">20</div></div>
+    </div>
+    <div class="result-box amber">
+      <p class="rb-title">⚠ The test set is now sealed</p>
+      <p>Do not use these 20 samples to tune the model. They simulate unseen production data.</p>
+    </div>
+  `,
+
+  (f) => {
+    const runningAvg = (foldAccs.slice(0,f+1).reduce((a,b)=>a+b,0)/(f+1)).toFixed(1);
+    const allDone = f === NUM_FOLDS - 1;
+    return `
+    <div class="panel-title">Step 2 — 5-fold cross-validation &nbsp;
+      <span style="font-size:12px;font-weight:400;color:#888">(fold ${f+1} of ${NUM_FOLDS})</span>
+    </div>
+    <div class="panel-sub">
+      The 80 training samples are split into 5 equal folds of 16 each.
+      ${f === 0
+        ? '<strong>Fold 1</strong> is the validation set; folds 2–5 train the model.'
+        : `<strong>Fold ${f+1}</strong> is now the validation set; the remaining folds train the model.`}
+      This rotates until every sample has been validated exactly once.
+    </div>
+    ${makeDots(f)}
+    <div class="legend-row">
+      <div class="legend-item"><div class="legend-swatch" style="background:#9FE1CB"></div>Train folds</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#FAC775"></div>Validation fold (fold ${f+1})</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#F0997B"></div>Test — still sealed</div>
+    </div>
+    ${renderFoldGrid(f)}
+    <div class="result-box ${allDone ? 'success' : 'info'}">
+      <p class="rb-title">${allDone ? '✓ All folds complete' : `Fold ${f+1} result`}</p>
+      <p>
+        Validation accuracy this fold: <strong>${foldAccs[f]}%</strong>
+        ${f > 0 ? ` &nbsp;|&nbsp; Running avg: <strong>${runningAvg}%</strong>` : ''}
+        ${allDone ? `<br>Final CV accuracy: <strong>${cvAvg}%</strong> — this becomes Run 1's score in hyperparameter tuning.` : ''}
+      </p>
+    </div>
+    <div style="margin-top:8px;font-size:12px;color:#888">
+      ${allDone ? 'Click Next to see how this feeds into hyperparameter tuning.' : `Click Next to advance to fold ${f+2}.`}
+    </div>
+  `;
+  },
+
+  () => `
+    <div class="panel-title">Step 3 — hyperparameter search with cross-validation</div>
+    <div class="panel-sub">Each candidate hyperparameter combination is evaluated across all 5 folds. <strong>Run 1</strong> uses the same default parameters and the same 5 folds from Step 2 — its score of <strong>${cvAvg}%</strong> is the average you just saw.</div>
+    <div style="margin-bottom:1rem">
+      <div style="font-size:13px;color:#888;margin-bottom:8px">${hpOptions.length} configurations × 5 folds = ${hpOptions.length*5} model fits</div>
+      ${hpOptions.map((h,i) => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+          <span style="font-size:12px;color:#888;min-width:30px">Run ${i+1}</span>
+          <div class="progress-bar" style="flex:1"><div class="progress-fill" style="width:${h.acc}%;background:${i===bestIdx?'#534AB7':i===0?'#1D9E75':'#9FE1CB'}"></div></div>
+          <span style="font-size:12px;font-weight:500;min-width:40px;color:${i===bestIdx?'#534AB7':i===0?'#085041':'#1a1a1a'}">${h.acc}%</span>
+          ${i===bestIdx?'<span style="font-size:11px;background:#EEEDFE;color:#534AB7;padding:1px 6px;border-radius:3px">best</span>':''}
+          ${i===0?'<span style="font-size:11px;background:#E1F5EE;color:#085041;padding:1px 6px;border-radius:3px">from step 2</span>':''}
+        </div>
+      `).join('')}
+    </div>
+    <table><thead><tr><th>#</th><th>Max depth</th><th>Learning rate</th><th>Regularisation</th><th>Val accuracy</th></tr></thead><tbody>
+    ${hpOptions.map((h,i) => `<tr${i===bestIdx?' class="best-row"':''}><td>${i+1}${i===bestIdx?' ★':''}</td><td>${h.depth}</td><td>${h.lr}</td><td>${h.reg}</td><td><strong>${h.acc}%</strong></td></tr>`).join('')}
+    </tbody></table>
+    <div class="result-box info" style="margin-top:1rem">
+      <p class="rb-title">Best configuration</p>
+      <p>Max depth = 6, Learning rate = 0.1, Regularisation = 0.01 → avg. CV accuracy <strong>${hpOptions[bestIdx].acc}%</strong></p>
+    </div>
+  `,
+
+  () => `
+    <div class="panel-title">Step 4 — optimal hyperparameters identified</div>
+    <div class="panel-sub">Cross-validation has converged. The winning configuration generalises best across all 5 folds.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:1rem 0">
+      <div class="hp-card selected"><div class="hp-card-label">Max tree depth</div><div class="hp-card-val">6</div></div>
+      <div class="hp-card selected"><div class="hp-card-label">Learning rate</div><div class="hp-card-val">0.1</div></div>
+      <div class="hp-card selected"><div class="hp-card-label">Regularisation (λ)</div><div class="hp-card-val">0.01</div></div>
+      <div class="hp-card selected"><div class="hp-card-label">Avg. CV accuracy</div><div class="hp-card-val">${hpOptions[bestIdx].acc}%</div></div>
+    </div>
+    <div class="result-box info">
+      <p class="rb-title">Why trust these parameters?</p>
+      <p>Each setting was evaluated on data the model never trained on. Averaging across 5 folds reduces variance from any lucky or unlucky split.</p>
+    </div>
+    <div class="result-box amber" style="margin-top:.75rem">
+      <p class="rb-title">Still haven't touched the test set</p>
+      <p>The 20% test set remains completely unseen — no hyperparameter decision was influenced by it.</p>
+    </div>
+  `,
+
+  () => `
+    <div class="panel-title">Step 5 — evaluate on the held-out 20% test set</div>
+    <div class="panel-sub">Using the optimal hyperparameters, train on all 80 training samples, then run a single evaluation on the sealed test set. This is our honest estimate of real-world performance.</div>
+    ${makeDots(null)}
+    <div class="legend-row">
+      <div class="legend-item"><div class="legend-swatch" style="background:#9FE1CB"></div>All 80 training samples</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#F0997B"></div>20 test samples — evaluated now</div>
+    </div>
+    <div class="metric-row" style="margin-top:1rem">
+      <div class="metric-card"><div class="metric-label">CV accuracy (train)</div><div class="metric-val" style="color:#534AB7">${hpOptions[bestIdx].acc}%</div></div>
+      <div class="metric-card"><div class="metric-label">Test set accuracy</div><div class="metric-val" style="color:#1D9E75">90.4%</div></div>
+      <div class="metric-card"><div class="metric-label">Generalisation gap</div><div class="metric-val">1.3%</div></div>
+    </div>
+    <div class="result-box success">
+      <p class="rb-title">✓ Model generalises well</p>
+      <p>The small gap between CV accuracy (${hpOptions[bestIdx].acc}%) and test accuracy (90.4%) shows the model is not overfitting.</p>
+    </div>
+  `,
+
+  () => `
+    <div class="panel-title">Step 6 — train the final model on all 100 samples</div>
+    <div class="panel-sub">Now that we trust the optimal hyperparameters, we train a fresh model on the entire dataset. More data means a better model. This is the model that goes to production.</div>
+    <div class="dataset-row">
+      ${Array.from({length:100}, () => `<div class="dot" style="background:#534AB7;color:#fff;font-size:8px">●</div>`).join('')}
+    </div>
+    <div class="legend-row">
+      <div class="legend-item"><div class="legend-swatch" style="background:#534AB7"></div>All 100 samples used for training</div>
+    </div>
+    <div class="metric-row" style="margin-top:1rem">
+      <div class="metric-card"><div class="metric-label">Training samples</div><div class="metric-val">100</div></div>
+      <div class="metric-card"><div class="metric-label">Hyperparameters</div><div class="metric-val" style="font-size:13px;padding-top:4px">depth=6, lr=0.1, λ=0.01</div></div>
+    </div>
+    <div class="result-box success">
+      <p class="rb-title">✓ Production-ready model</p>
+      <p>Optimal hyperparameters were chosen by cross-validation, validated on an unseen test set, and the final model leverages every labelled example available.</p>
+    </div>
+    <div class="result-box info" style="margin-top:.75rem">
+      <p class="rb-title">Key takeaway</p>
+      <p>K-fold CV lets you tune hyperparameters and get a reliable performance estimate using only training data — the test set stays uncontaminated throughout.</p>
+    </div>
+  `
+];
+
+function render() {
+  buildStepper();
+  document.getElementById('panel-content').innerHTML = ls === 1 ? stepContent[1](sub) : stepContent[ls]();
+  document.getElementById('btn-prev').disabled = ls === 0;
+  document.getElementById('btn-next').disabled = ls === LOGICAL_STEPS - 1;
+  document.getElementById('btn-next').textContent = ls === LOGICAL_STEPS - 1 ? 'Done ✓' : 'Next →';
+}
+
+function navigate(dir) {
+  if (dir === 1) {
+    if (ls === 1 && sub < NUM_FOLDS - 1) { sub++; }
+    else if (ls < LOGICAL_STEPS - 1) { ls++; sub = 0; }
+  } else {
+    if (ls === 1 && sub > 0) { sub--; }
+    else if (ls > 0) { ls--; sub = ls === 1 ? NUM_FOLDS - 1 : 0; }
+  }
+  render();
+}
+
+render();
+</script>
+</body>
+</html>
